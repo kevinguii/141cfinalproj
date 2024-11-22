@@ -1,0 +1,306 @@
+---
+title: "STA141A_FinalProj"
+author: "Kevin Gui"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+# Factors Influencing Airbnb Listing Prices in New York City
+
+## Executive Summary
+This project investigates the factors that influence the pricing of Airbnb listings in New York City (NYC). By analyzing a comprehensive dataset from Airbnb, we aim to identify key variables that significantly affect listing prices and develop predictive models to estimate prices based on these features. We employ exploratory data analysis (EDA) to understand data distributions and relationships, and we use both linear regression and random forest models to predict prices. Our analysis reveals that factors such as location (borough and neighborhood), room type, minimum nights, availability, and number of reviews significantly impact Airbnb prices in NYC. The random forest model outperforms the linear regression model in predictive accuracy, suggesting that non-linear relationships are present in the data. These insights can help hosts optimize their pricing strategies and assist guests in making informed booking decisions.
+
+## 1. Introduction
+
+### Project Description and Background
+Airbnb has revolutionized the hospitality industry by allowing property owners to rent out their spaces to travelers worldwide. New York City, as one of the most visited cities globally, has a highly competitive and diverse short-term rental market. With thousands of listings across five boroughs, understanding what drives Airbnb prices can benefit hosts looking to optimize their rental income and guests seeking affordable options.
+
+### Project Goals
+- Identify Key Factors Influencing Prices: Determine which features significantly impact Airbnb listing prices in NYC.
+- Predictive Modeling: Develop models to predict listing prices based on these features.
+- Provide Insights for Stakeholders: Offer actionable insights for hosts and guests to make informed decisions.
+
+## 2. Data Description
+
+### Dataset Overview
+We utilize the "New York City Airbnb Open Data" from Kaggle, which includes detailed information about Airbnb listings in NYC for the year 2019.
+
+Data Source: Kaggle - New York City Airbnb Open Data
+Number of Observations: 48,895 listings
+Variables:
+id: Listing ID
+name: Name of the listing
+host_id: Host ID
+host_name: Host name
+neighbourhood_group: Borough (Manhattan, Brooklyn, etc.)
+neighbourhood: Specific neighborhood within the borough
+latitude: Latitude coordinate
+longitude: Longitude coordinate
+room_type: Type of room offered
+price: Price per night in USD
+minimum_nights: Minimum number of nights required to book
+number_of_reviews: Total number of reviews
+last_review: Date of the last review
+reviews_per_month: Average number of reviews per month
+calculated_host_listings_count: Number of listings the host has
+availability_365: Number of days the listing is available per year
+
+### Summary Statistics
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(GGally)
+
+# Read the data
+df <- read.csv("AB_NYC_2019.csv")
+
+# View summary statistics
+summary(df)
+
+```
+Observations: 
+The average price is $152.72 with a standard deviation of $240.15.
+There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per_month'.
+
+## 3. Exploratory Data Analysis
+
+### Handling Missing Values
+```{r}
+# Check for missing values
+colSums(is.na(df))
+```
+Observation:
+
+'name': 16 missing
+'host_name': 21 missing
+'last_review' and 'reviews_per_month': 10,052 missing (listings with zero reviews)
+
+```{r}
+# Fill missing 'reviews_per_month' with 0
+df$reviews_per_month[is.na(df$reviews_per_month)] <- 0
+
+# Drop rows with missing 'name' and 'host_name'
+df <- df %>% drop_na(name, host_name)
+```
+
+### Distribution of Prices
+```{r}
+# Plot distribution of prices
+ggplot(df, aes(x = price)) +
+  geom_histogram(binwidth = 50, fill = "blue", color = "black") +
+  xlim(0, 1000) +
+  labs(title = "Distribution of Airbnb Prices", x = "Price ($)", y = "Count")
+
+```
+
+Observation:
+
+The price distribution is right-skewed, with most listings priced below $500.
+
+### Price by Borough
+```{r}
+# Boxplot of price by borough
+ggplot(df, aes(x = neighbourhood_group, y = price)) +
+  geom_boxplot() +
+  ylim(0, 500) +
+  labs(title = "Price Distribution by Borough", x = "Borough", y = "Price ($)")
+
+```
+
+Observation:
+
+Manhattan has higher median prices compared to other boroughs.
+Staten Island has a wider range of prices despite fewer listings.
+
+### Pairwise Scatter Plots
+```{r}
+# Select numerical variables
+numerical_vars <- df %>% select(price, minimum_nights, number_of_reviews, reviews_per_month, availability_365)
+
+# Pairwise scatter plots
+ggpairs(numerical_vars)
+
+```
+
+Observation:
+
+Weak correlations between 'price' and other numerical variables.
+'availability_365' shows some negative correlation with 'number_of_reviews'.
+
+## 4. Methodology
+
+### Rationale for Method Selection
+Exploratory Data Analysis (EDA): To understand data distributions, identify patterns, and detect anomalies.
+Data Preprocessing: To clean and prepare the data for modeling, ensuring reliable results.
+Linear Regression: As a baseline model to understand the linear relationships between variables.
+Random Forest Regression: To capture non-linear relationships and interactions between variables.
+Cross-Validation: To assess model performance and prevent overfitting.
+
+### Data Preprocessing Steps
+Handling Missing Values: Imputed missing values appropriately.
+Outlier Removal: Removed listings with prices above the 99th percentile to reduce skewness.
+Encoding Categorical Variables: Converted categorical variables into factors and created dummy variables.
+Feature Scaling: Scaled numerical features where necessary.
+
+## 5. Analysis and Findings
+
+### Data Cleaning and Preparation
+```{r}
+# Remove extreme outliers in 'price' (above 99th percentile)
+price_threshold <- quantile(df$price, 0.99)
+df <- df %>% filter(price <= price_threshold)
+
+# Convert categorical variables to factors
+df$neighbourhood_group <- as.factor(df$neighbourhood_group)
+df$room_type <- as.factor(df$room_type)
+
+# Create dummy variables for 'neighbourhood_group' and 'room_type'
+df <- df %>%
+  mutate(
+    borough_num = as.numeric(neighbourhood_group),
+    room_type_num = as.numeric(room_type)
+  )
+
+```
+
+### Splitting Data into Training and Testing Sets
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data (80% training, 20% testing)
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+```
+
+### Linear Regression Model
+```{r}
+# Fit linear regression model
+lm_model <- lm(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data)
+
+# Summary of the model
+summary(lm_model)
+
+```
+Findings:
+
+Significant Predictors: 'borough_num', 'room_type_num', 'minimum_nights', and 'availability_365'.
+Model Performance: Adjusted R-squared of approximately 0.31, indicating that the model explains about 31% of the variance in 'price'.
+
+### Residual Analysis for Linear Regression
+
+```{r}
+# Plot residuals
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))  # Adjust the bottom, left, top, and right margins
+plot(lm_model)
+
+```
+
+Observation:
+
+Residuals vs Fitted: Indicates non-linearity.
+Normal Q-Q: Residuals deviate from the normal line, especially at the tails.
+Scale-Location: Heteroscedasticity is present.
+Residuals vs Leverage: No extreme outliers detected.
+
+### Random Forest Regression Model
+```{r}
+# Load randomForest package
+library(randomForest)
+
+# Fit random forest model
+rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, ntree = 100)
+
+# Predict on test data
+rf_predictions <- predict(rf_model, newdata = test_data)
+
+# Calculate RMSE
+rmse_rf <- sqrt(mean((rf_predictions - test_data$price)^2))
+
+# Variable Importance Plot
+varImpPlot(rf_model)
+
+```
+Findings:
+
+Model Performance: RMSE of approximately $68.75, which is lower than the linear model's RMSE.
+Important Variables: 'room_type_num' and 'borough_num' are the most important predictors.
+
+### Model Comparison
+```{r}
+# Predict using linear model
+lm_predictions <- predict(lm_model, newdata = test_data)
+
+# Calculate RMSE for linear model
+rmse_lm <- sqrt(mean((lm_predictions - test_data$price)^2))
+
+# Compare RMSEs
+rmse_values <- data.frame(
+  Model = c("Linear Regression", "Random Forest"),
+  RMSE = c(rmse_lm, rmse_rf)
+)
+print(rmse_values)
+
+```
+
+Results:
+
+Linear Regression RMSE: Approximately $88.94
+Random Forest RMSE: Approximately $68.75
+Conclusion: Random Forest model performs better.
+
+### Cross-Validation with Random Forest
+```{r}
+# Load caret package
+library(caret)
+
+# Define cross-validation method
+train_control <- trainControl(method = "cv", number = 5)
+
+# Train the random forest model with cross-validation
+set.seed(123)
+rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, method = "rf", trControl = train_control)
+
+# Model performance
+rf_cv_model$results
+
+```
+
+Findings:
+
+Cross-validated RMSE is consistent with the test RMSE, confirming model reliability.
+
+## 6. Conclusions
+
+Key Influencing Factors: Location (borough), room type, minimum nights, and availability significantly impact Airbnb listing prices in NYC.
+Model Performance: The Random Forest model outperforms the Linear Regression model, indicating the presence of non-linear relationships.
+Recommendations for Hosts:
+Optimize pricing strategies by considering the impact of room type and location.
+Adjust minimum nights and availability to influence pricing positively.
+Recommendations for Guests:
+Look beyond popular boroughs like Manhattan to find more affordable options.
+Consider room types and booking durations to get better deals.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
