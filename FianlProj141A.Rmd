@@ -9,6 +9,16 @@ output: pdf_document
 knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
 ```
 
+```{r}
+# Load packages
+library(tidyverse)
+library(GGally)
+library(randomForest)
+library(caret)
+```
+
+
+
 # Factors Influencing Airbnb Listing Prices in New York City
 
 ## Executive Summary
@@ -54,6 +64,7 @@ availability_365: Number of days the listing is available per year
 # Load necessary libraries
 library(tidyverse)
 library(GGally)
+library(randomForest)
 
 # Read the data
 df <- read.csv("AB_NYC_2019.csv")
@@ -72,6 +83,10 @@ There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per
 ```{r}
 # Check for missing values
 colSums(is.na(df))
+
+# Explore the data 
+str(df) #offers a compact preview of the data
+head(df)
 ```
 Observation:
 
@@ -86,6 +101,20 @@ df$reviews_per_month[is.na(df$reviews_per_month)] <- 0
 # Drop rows with missing 'name' and 'host_name'
 df <- df %>% drop_na(name, host_name)
 ```
+
+###Handling outliers for Columns
+```{r}
+max(df$minimum_nights) #checking for information 
+mean(df$minimum_nights) #comparative measure of minimum nights
+
+df2 <- df
+ggplot(df2, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'red') + 
+  labs(title = "Distribution of Minimum Nights Before Removing Outliers", 
+                          x = "Minimum Nights", y = "Count")
+#we see a heavily skewed right dist. so we want to remove these outer values
+```
+
 
 ### Distribution of Prices
 ```{r}
@@ -154,7 +183,23 @@ Feature Scaling: Scaled numerical features where necessary.
 price_threshold <- quantile(df$price, 0.99)
 df <- df %>% filter(price <= price_threshold)
 
-# Convert categorical variables to factors
+#must also account for lower outliers in price
+sum(df$price == 0) #air bnb's with a price of 0 are questionable and removal may be advisable
+df$price <- ifelse(df$price < 10, 10, df$price) # As a broader case, replace prices 
+#below $10 with 10 and above $1000 with 1000. The replacement helps retain information
+#without limiting the impact on the model
+
+# Replace minimum_nights above 30 with 30, same reasoning as before to keep information
+# without negatively impacting the model accuracy 
+df$minimum_nights <- ifelse(df$minimum_nights > 30, 30, df$minimum_nights)
+
+ggplot(df, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'green') + 
+  labs(title = "Distribution of Minimum Nights After Removing Outliers", 
+                          x = "Minimum Nights", y = "Count")
+
+# Convert categorical variables to factors through label encoding, works for decision
+# trees but will need to adjust for the linear regression model
 df$neighbourhood_group <- as.factor(df$neighbourhood_group)
 df$room_type <- as.factor(df$room_type)
 
@@ -182,11 +227,23 @@ test_data <- df[-train_indices, ]
 ### Linear Regression Model
 ```{r}
 # Fit linear regression model
-lm_model <- lm(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data)
+#need to implement one hot encoding
+dummy_data <- model.matrix(~ borough + room_type - 1, data = train_data)
+train_data_encoded <- cbind(train_data, dummy_data)
 
-# Summary of the model
+
+dummy_test <- model.matrix(~ borough + room_type - 1, data = test_data)
+test_data_encoded <- cbind(test_data, dummy_test)
+
+#drop the original categorical variables to prevent duplciate entries
+train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+
+test_data_encoded <- test_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+
+#linear regression model 
+lm_model <- lm(price ~ borough + room_type + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data)
+
 summary(lm_model)
-
 ```
 Findings:
 
