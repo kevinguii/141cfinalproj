@@ -206,8 +206,8 @@ df$room_type <- as.factor(df$room_type)
 # Create dummy variables for 'neighbourhood_group' and 'room_type'
 df <- df %>%
   mutate(
-    borough_num = as.numeric(neighbourhood_group),
-    room_type_num = as.numeric(room_type)
+    borough_num = as.factor(neighbourhood_group),
+    room_type_num = as.factor(room_type)
   )
 
 ```
@@ -226,29 +226,44 @@ test_data <- df[-train_indices, ]
 
 ### Linear Regression Model
 ```{r}
+### Linear Regression Model
 # Fit linear regression model
-#need to implement one hot encoding
-dummy_data <- model.matrix(~ borough + room_type - 1, data = train_data)
+# Need to implement one-hot encoding for categorical variables
+dummy_data <- model.matrix(~ neighbourhood_group + room_type - 1, data = train_data)
 train_data_encoded <- cbind(train_data, dummy_data)
 
-
-dummy_test <- model.matrix(~ borough + room_type - 1, data = test_data)
+# One-hot encode the test data 
+dummy_test <- model.matrix(~ neighbourhood_group + room_type - 1, data = test_data)
 test_data_encoded <- cbind(test_data, dummy_test)
 
-#drop the original categorical variables to prevent duplciate entries
-train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+# Drop the original categorical variables to prevent duplicate entries
+# This ensures that only the one-hot encoded columns are used in the model
+train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
+test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
 
-test_data_encoded <- test_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+# Align test data to match the columns in train data
+missing_cols <- setdiff(names(train_data_encoded), names(test_data_encoded))
+test_data_encoded[missing_cols] <- 0  # Add missing columns with zeros
+test_data_encoded <- test_data_encoded[, names(train_data_encoded)]  # Ensure column order is consistent
 
-#linear regression model 
-lm_model <- lm(price ~ borough + room_type + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data)
+# Fit the linear regression model using the encoded training data
+# As a note, we "lose" one category from each column of neighbourhood_group
+# and the room_type because in one-hot encoding, we need a dummy variable as the set reference category
+lm_model <- lm(price ~. - id - host_id - name - host_name - neighbourhood - last_review - borough_num
+               - room_type_num - latitude - longitude, data = train_data)
 
+# View the summary of the linear regression model
 summary(lm_model)
 ```
 Findings:
 
-Significant Predictors: 'borough_num', 'room_type_num', 'minimum_nights', and 'availability_365'.
-Model Performance: Adjusted R-squared of approximately 0.31, indicating that the model explains about 31% of the variance in 'price'.
+Significant Predictors: 'neighbourhood_group', 'room_type', 'minimum_nights', and 'availability_365'.
+Model Performance: Adjusted R-squared of approximately 0.35, indicating that the model explains about 35% of the variance in 'price'. An interesting observation to make is that the test lists the neighborhood group/
+borough Staten Island and not significantly significant with a p value of 0.30. It is also noted that 
+the Borough Queens is relatively large compared to its other neighbourhood groups but is still sigificant
+at an alpha level of .01
 
 ### Residual Analysis for Linear Regression
 
@@ -272,10 +287,14 @@ Residuals vs Leverage: No extreme outliers detected.
 library(randomForest)
 
 # Fit random forest model
-rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, ntree = 100)
+rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, ntree = 100,
+                         importance = TRUE, na.action = na.omit)
 
 # Predict on test data
 rf_predictions <- predict(rf_model, newdata = test_data)
+
+#Calculate mean absolute error
+test_mae_rf <- mean(abs(rf_predictions - test_data$price))
 
 # Calculate RMSE
 rmse_rf <- sqrt(mean((rf_predictions - test_data$price)^2))
@@ -292,14 +311,19 @@ Important Variables: 'room_type_num' and 'borough_num' are the most important pr
 ### Model Comparison
 ```{r}
 # Predict using linear model
-lm_predictions <- predict(lm_model, newdata = test_data)
+lm_model <- lm(price ~ ., data = train_data_encoded)
+lm_predictions <- predict(lm_model, newdata = test_data_encoded)
+
+# Calculate mean absolute error 
+test_mae_lm <- mean(abs(lm_predictions - test_data_encoded$price))
 
 # Calculate RMSE for linear model
-rmse_lm <- sqrt(mean((lm_predictions - test_data$price)^2))
+rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
 
 # Compare RMSEs
 rmse_values <- data.frame(
   Model = c("Linear Regression", "Random Forest"),
+  MAE = c(test_mae_lm, test_mae_rf),
   RMSE = c(rmse_lm, rmse_rf)
 )
 print(rmse_values)
@@ -322,7 +346,7 @@ train_control <- trainControl(method = "cv", number = 5)
 
 # Train the random forest model with cross-validation
 set.seed(123)
-rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, method = "rf", trControl = train_control)
+rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control)
 
 # Model performance
 rf_cv_model$results
