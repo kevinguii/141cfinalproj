@@ -1,4 +1,3 @@
-
 ---
 title: "STA141A_FinalProj"
 author: "Kevin Gui"
@@ -9,16 +8,6 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
 ```
-
-```{r}
-# Load packages
-library(tidyverse)
-library(GGally)
-library(randomForest)
-library(caret)
-```
-
-
 
 # Factors Influencing Airbnb Listing Prices in New York City
 
@@ -65,7 +54,13 @@ availability_365: Number of days the listing is available per year
 # Load necessary libraries
 library(tidyverse)
 library(GGally)
+library(caret)
 library(randomForest)
+library(xgboost)
+library(Matrix)
+library(corrplot)
+library(e1071)
+library(DT)
 
 # Read the data
 df <- read.csv("AB_NYC_2019.csv")
@@ -76,7 +71,7 @@ summary(df)
 ```
 Observations: 
 The average price is $152.72 with a standard deviation of $240.15.
-There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per_month'.
+There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per_month'. The 'price' variable is also highly skewed with extreme outliers.
 
 ## 3. Exploratory Data Analysis
 
@@ -114,6 +109,26 @@ ggplot(df2, aes(x = minimum_nights)) +
   labs(title = "Distribution of Minimum Nights Before Removing Outliers", 
                           x = "Minimum Nights", y = "Count")
 #we see a heavily skewed right dist. so we want to remove these outer values
+```
+### Analyzing Skewness and Transformations
+```{r}
+# Check skewness of numerical variables
+numeric_vars <- df %>% select(price, minimum_nights, number_of_reviews, reviews_per_month, availability_365)
+skewness_values <- sapply(numeric_vars, e1071::skewness)
+print(skewness_values)
+```
+Observation:
+
+'price' and 'minimum_nights' are highly skewed to the right.
+
+Log Transformation of Skewed Variables
+```{r}
+# Apply log transformation to 'price' and 'minimum_nights'
+df <- df %>%
+  mutate(
+    log_price = log(price + 1),
+    log_minimum_nights = log(minimum_nights + 1)
+  )
 ```
 
 
@@ -161,6 +176,39 @@ Observation:
 Weak correlations between 'price' and other numerical variables.
 'availability_365' shows some negative correlation with 'number_of_reviews'.
 
+### Exploring Location Data
+Using Neighborhoods and Coordinates:
+```{r}
+# Number of unique neighborhoods
+num_neighbourhoods <- length(unique(df$neighbourhood))
+cat("Number of unique neighborhoods:", num_neighbourhoods)
+
+# Visualize the number of listings per neighborhood
+top_neighbourhoods <- df %>%
+  group_by(neighbourhood) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  top_n(20, count)
+
+ggplot(top_neighbourhoods, aes(x = reorder(neighbourhood, count), y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 20 Neighborhoods by Number of Listings", x = "Neighborhood", y = "Number of Listings")
+
+```
+### Correlation Analysis
+```{r}
+# Compute correlation matrix
+corr_matrix <- cor(numeric_vars)
+corrplot(corr_matrix, method = "number", type = "upper")
+
+```
+
+Observation:
+
+There is a moderate positive correlation between 'number_of_reviews' and 'reviews_per_month'.
+'availability_365' has a weak correlation with other variables.
+
 ## 4. Methodology
 
 ### Rationale for Method Selection
@@ -199,57 +247,139 @@ ggplot(df, aes(x = minimum_nights)) +
   labs(title = "Distribution of Minimum Nights After Removing Outliers", 
                           x = "Minimum Nights", y = "Count")
 
-# Convert categorical variables to factors through label encoding, works for decision
-# trees but will need to adjust for the linear regression model
-df$neighbourhood_group <- as.factor(df$neighbourhood_group)
-df$room_type <- as.factor(df$room_type)
+# # Convert categorical variables to factors through label encoding, works for decision
+# # trees but will need to adjust for the linear regression model
+# df$neighbourhood_group <- as.factor(df$neighbourhood_group)
+# df$room_type <- as.factor(df$room_type)
+# 
+# # Create dummy variables for 'neighbourhood_group' and 'room_type'
+# df <- df %>%
+#   mutate(
+#     borough_num = as.factor(neighbourhood_group),
+#     room_type_num = as.factor(room_type)
+#   )
 
-# Create dummy variables for 'neighbourhood_group' and 'room_type'
-df <- df %>%
+```
+```{r}
+# One-hot encode 'room_type' and 'neighbourhood_group'
+df_encoded <- df %>%
   mutate(
-    borough_num = as.numeric(neighbourhood_group),
-    room_type_num = as.numeric(room_type)
+    borough_num = as.factor(neighbourhood_group),
+    room_type_num = as.factor(room_type)
+  )
+
+df_encoded <- cbind(df_encoded, model.matrix(~ room_type + neighbourhood_group - 1, data = df_encoded))
+
+```
+
+Target Encoding for 'neighbourhood'
+```{r}
+# Compute mean price per neighbourhood
+neighbourhood_price <- df %>%
+  group_by(neighbourhood) %>%
+  summarise(mean_price = mean(log_price))
+
+# Merge with the main dataset
+df_encoded <- df_encoded %>%
+  left_join(neighbourhood_price, by = "neighbourhood")
+
+```
+Feature Engineering
+Interaction Terms
+
+```{r}
+# Create interaction between room type and neighbourhood group
+df_encoded <- df_encoded %>%
+  mutate(
+    interaction_term = interaction(room_type, neighbourhood_group)
+  )
+
+# One-hot encode the interaction term
+df_encoded <- cbind(df_encoded, model.matrix(~ interaction_term - 1, data = df_encoded))
+
+```
+
+Using Geographical Coordinates
+```{r}
+# Create features based on latitude and longitude
+df_encoded <- df_encoded %>%
+  mutate(
+    lat_long = latitude * longitude
   )
 
 ```
 
-### Splitting Data into Training and Testing Sets
+
+```{r}
+# df_encoded <- df_encoded %>% select(-id,-name,-host_id,-host_name,-room_type, -neighbourhood_group,-neighbourhood,-last_review)
+
+```
+
+
+Splitting Data into Training and Testing Sets
 ```{r}
 # Set seed for reproducibility
 set.seed(123)
 
 # Split data (80% training, 20% testing)
-train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
-train_data <- df[train_indices, ]
-test_data <- df[-train_indices, ]
+train_index <- createDataPartition(df_encoded$log_price, p = 0.8, list = FALSE)
+train_data <- df_encoded[train_index, ]
+test_data <- df_encoded[-train_index, ]
+```
+
+
+Feature Scaling
+```{r}
+# Identify numeric features to scale
+numeric_features <- c("log_minimum_nights", "number_of_reviews", "reviews_per_month", "availability_365", "mean_price", "lat_long")
+
+# Scale numeric features
+preProcValues <- preProcess(train_data[, numeric_features], method = c("center", "scale"))
+train_data[, numeric_features] <- predict(preProcValues, train_data[, numeric_features])
+test_data[, numeric_features] <- predict(preProcValues, test_data[, numeric_features])
 
 ```
 
 ### Linear Regression Model
 ```{r}
+### Linear Regression Model
 # Fit linear regression model
-#need to implement one hot encoding
-dummy_data <- model.matrix(~ borough + room_type - 1, data = train_data)
+# Need to implement one-hot encoding for categorical variables
+dummy_data <- model.matrix(~ neighbourhood_group + room_type - 1, data = train_data)
 train_data_encoded <- cbind(train_data, dummy_data)
 
-
-dummy_test <- model.matrix(~ borough + room_type - 1, data = test_data)
+# One-hot encode the test data 
+dummy_test <- model.matrix(~ neighbourhood_group + room_type - 1, data = test_data)
 test_data_encoded <- cbind(test_data, dummy_test)
 
-#drop the original categorical variables to prevent duplciate entries
-train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+# Drop the original categorical variables to prevent duplicate entries
+# This ensures that only the one-hot encoded columns are used in the model
+train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
+test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
 
-test_data_encoded <- test_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "borough", "neighbourhood_group", "neighbourhood"))]
+# Align test data to match the columns in train data
+missing_cols <- setdiff(names(train_data_encoded), names(test_data_encoded))
+test_data_encoded[missing_cols] <- 0  # Add missing columns with zeros
+test_data_encoded <- test_data_encoded[, names(train_data_encoded)]  # Ensure column order is consistent
 
-#linear regression model 
-lm_model <- lm(price ~ borough + room_type + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data)
+# Fit the linear regression model using the encoded training data
+# As a note, we "lose" one category from each column of neighbourhood_group
+# and the room_type because in one-hot encoding, we need a dummy variable as the set reference category
+lm_model <- lm(price ~. - id - host_id - name - host_name - neighbourhood - last_review - borough_num
+               - room_type_num - latitude - longitude, data = train_data)
 
+# View the summary of the linear regression model
 summary(lm_model)
 ```
 Findings:
 
-Significant Predictors: 'borough_num', 'room_type_num', 'minimum_nights', and 'availability_365'.
-Model Performance: Adjusted R-squared of approximately 0.31, indicating that the model explains about 31% of the variance in 'price'.
+Significant Predictors: 'neighbourhood_group', 'room_type', 'minimum_nights', and 'availability_365'.
+Model Performance: Adjusted R-squared of approximately 0.35, indicating that the model explains about 35% of the variance in 'price'. An interesting observation to make is that the test lists the neighborhood group/
+borough Staten Island and not significantly significant with a p value of 0.30. It is also noted that 
+the Borough Queens is relatively large compared to its other neighbourhood groups but is still sigificant
+at an alpha level of .01
 
 ### Residual Analysis for Linear Regression
 
@@ -273,10 +403,13 @@ Residuals vs Leverage: No extreme outliers detected.
 library(randomForest)
 
 # Fit random forest model
-rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, ntree = 100)
+rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, ntree = 100, importance = TRUE, na.action = na.omit)
 
 # Predict on test data
 rf_predictions <- predict(rf_model, newdata = test_data)
+
+#Calculate mean absolute error
+test_mae_rf <- mean(abs(rf_predictions - test_data$price))
 
 # Calculate RMSE
 rmse_rf <- sqrt(mean((rf_predictions - test_data$price)^2))
@@ -293,14 +426,19 @@ Important Variables: 'room_type_num' and 'borough_num' are the most important pr
 ### Model Comparison
 ```{r}
 # Predict using linear model
-lm_predictions <- predict(lm_model, newdata = test_data)
+lm_model <- lm(price ~ ., data = train_data_encoded)
+lm_predictions <- predict(lm_model, newdata = test_data_encoded)
+
+# Calculate mean absolute error 
+test_mae_lm <- mean(abs(lm_predictions - test_data_encoded$price))
 
 # Calculate RMSE for linear model
-rmse_lm <- sqrt(mean((lm_predictions - test_data$price)^2))
+rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
 
 # Compare RMSEs
 rmse_values <- data.frame(
   Model = c("Linear Regression", "Random Forest"),
+  MAE = c(test_mae_lm, test_mae_rf),
   RMSE = c(rmse_lm, rmse_rf)
 )
 print(rmse_values)
@@ -315,18 +453,19 @@ Conclusion: Random Forest model performs better.
 
 ### Cross-Validation with Random Forest
 ```{r}
-# Load caret package
-library(caret)
-
-# Define cross-validation method
-train_control <- trainControl(method = "cv", number = 5)
-
-# Train the random forest model with cross-validation
-set.seed(123)
-rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + availability_365, data = train_data, method = "rf", trControl = train_control)
-
-# Model performance
-rf_cv_model$results
+# # Load caret package
+# library(caret)
+# 
+# # Define cross-validation method
+# train_control <- trainControl(method = "cv", number = 3)
+# 
+# # Train the random forest model with cross-validation
+# set.seed(123)
+# rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control,
+#                      ntree=100)
+# 
+# # Model performance
+# rf_cv_model$results
 
 ```
 
