@@ -194,8 +194,10 @@ ggplot(top_neighbourhoods, aes(x = reorder(neighbourhood, count), y = count)) +
   geom_bar(stat = "identity", fill = "steelblue") +
   coord_flip() +
   labs(title = "Top 20 Neighborhoods by Number of Listings", x = "Neighborhood", y = "Number of Listings")
-
 ```
+We have identified 221 unique neighbourhoods in New York, displaying the top 20 and the
+amount of listings. We can see Williamsburg and Bedford_Stuyevsant as the most popular by
+a decent margin.
 ### Correlation Analysis
 ```{r}
 # Compute correlation matrix
@@ -356,6 +358,7 @@ test_data_encoded <- cbind(test_data, dummy_test)
 # This ensures that only the one-hot encoded columns are used in the model
 train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
 "borough_num", "room_type_num", "latitude", "longitude"))]
+
 test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
 "borough_num", "room_type_num", "latitude", "longitude"))]
 
@@ -367,8 +370,7 @@ test_data_encoded <- test_data_encoded[, names(train_data_encoded)]  # Ensure co
 # Fit the linear regression model using the encoded training data
 # As a note, we "lose" one category from each column of neighbourhood_group
 # and the room_type because in one-hot encoding, we need a dummy variable as the set reference category
-lm_model <- lm(price ~. - id - host_id - name - host_name - neighbourhood - last_review - borough_num
-               - room_type_num - latitude - longitude, data = train_data)
+lm_model <- lm(price ~., data = train_data_encoded)
 
 # View the summary of the linear regression model
 summary(lm_model)
@@ -396,26 +398,81 @@ Residuals vs Fitted: Indicates non-linearity.
 Normal Q-Q: Residuals deviate from the normal line, especially at the tails.
 Scale-Location: Heteroscedasticity is present.
 Residuals vs Leverage: No extreme outliers detected.
+```{r}
+library(caret)
+
+set.seed(123)
+tune_grid <- expand.grid(mtry = c(3, 5, 7))  # Test different values of mtry
+rf_tuned <- train(
+  log_price ~ .,
+  data = train_data_encoded,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),  # 5-fold cross-validation
+  tuneGrid = tune_grid,
+  ntree = 300  # Increase the number of trees for better performance
+)
+
+# Check the best mtry value
+print(rf_tuned$bestTune)
+best_rf_model <- rf_tuned$finalModel
+```
+
+
+```{r}
+print(colnames(train_data_encoded))
+print(colnames(test_data_encoded))
+```
+
+```{r}
+# Load the randomForest package
+library(randomForest)
+
+# Prepare x (predictors) and y (response variable) for training
+x_train <- train_data_encoded[, !(names(train_data_encoded) %in% c("price"))]  # Remove the target column
+y_train <- train_data_encoded$price  # Response variable
+
+# Prepare x (predictors) for testing
+x_test <- test_data_encoded[, !(names(test_data_encoded) %in% c("price"))]  # Remove the target column
+y_test <- test_data_encoded$price  # Actual prices for testing
+
+# Fit the Random Forest model using x and y
+rf_model <- randomForest(x = x_train, y = y_train, ntree = 100, importance = TRUE, na.action = na.omit)
+
+# Predict on test data
+rf_predictions <- predict(rf_model, newdata = x_test)
+
+# Calculate mean absolute error
+test_mae_rf <- mean(abs(rf_predictions - y_test))
+print(paste("Mean Absolute Error:", test_mae_rf))
+
+# Calculate RMSE
+rmse_rf <- sqrt(mean((rf_predictions - y_test)^2))
+print(paste("Root Mean Squared Error:", rmse_rf))
+
+# Variable Importance Plot
+varImpPlot(rf_model)
+```
 
 ### Random Forest Regression Model
 ```{r}
 # Load randomForest package
-library(randomForest)
-
+#library(randomForest)
 # Fit random forest model
-rf_model <- randomForest(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, ntree = 100, importance = TRUE, na.action = na.omit)
+#rf_model <- randomForest(price ~., data = train_data_encoded, ntree = 1, importance = TRUE, na.action = #na.omit)
+
+
 
 # Predict on test data
-rf_predictions <- predict(rf_model, newdata = test_data)
+#rf_predictions <- predict(rf_model, newdata = test_data_encoded)
 
 #Calculate mean absolute error
-test_mae_rf <- mean(abs(rf_predictions - test_data$price))
+#test_mae_rf <- mean(abs(rf_predictions - test_data_encoded$price))
 
 # Calculate RMSE
-rmse_rf <- sqrt(mean((rf_predictions - test_data$price)^2))
+#rmse_rf <- sqrt(mean((rf_predictions - test_data_encoded$price)^2))
 
 # Variable Importance Plot
-varImpPlot(rf_model)
+#varImpPlot(rf_model)
 
 ```
 Findings:
@@ -443,6 +500,11 @@ rmse_values <- data.frame(
 )
 print(rmse_values)
 
+baseline_prediction <- mean(train_data_encoded$price)
+baseline_mae <- mean(abs(baseline_prediction - test_data_encoded$price))
+baseline_rmse <- sqrt(mean((baseline_prediction - test_data_encoded$price)^2))
+print(c(baseline_mae, baseline_rmse))
+
 ```
 
 Results:
@@ -451,21 +513,27 @@ Linear Regression RMSE: Approximately $88.94
 Random Forest RMSE: Approximately $68.75
 Conclusion: Random Forest model performs better.
 
+```{r}
+library(caret)
+train_control <- trainControl(method = "cv", number = 5)
+rf_cv_model <- train(x = x_train, y = y_train, method = "rf", trControl = train_control, ntree = 100)
+print(rf_cv_model)
+```
+
 ### Cross-Validation with Random Forest
 ```{r}
-# # Load caret package
-# library(caret)
+# Load caret package
+library(caret)
 # 
-# # Define cross-validation method
-# train_control <- trainControl(method = "cv", number = 3)
+# Define cross-validation method
+train_control <- trainControl(method = "cv", number = 3)
 # 
 # # Train the random forest model with cross-validation
-# set.seed(123)
-# rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control,
-#                      ntree=100)
+set.seed(123)
+rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control, ntree=100)
 # 
 # # Model performance
-# rf_cv_model$results
+rf_cv_model$results
 
 ```
 
