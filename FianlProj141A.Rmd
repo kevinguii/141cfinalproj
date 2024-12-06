@@ -206,6 +206,17 @@ corrplot(corr_matrix, method = "number", type = "upper")
 
 ```
 
+### Map of Borough
+```{r}
+ggplot(data = df, aes(x = longitude, y = latitude, color = df$neighbourhood_group)) +
+  geom_point(size = 0.75)
+```
+
+### Map of Room Types Distribution
+```{r}
+ggplot(data = df, aes(x = longitude, y = latitude, color = room_type)) +
+  geom_point(size = 0.75)
+```
 Observation:
 
 There is a moderate positive correlation between 'number_of_reviews' and 'reviews_per_month'.
