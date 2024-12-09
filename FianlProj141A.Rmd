@@ -67,7 +67,6 @@ df <- read.csv("AB_NYC_2019.csv")
 
 # View summary statistics
 summary(df)
-
 ```
 Observations: 
 The average price is $152.72 with a standard deviation of $240.15.
@@ -319,7 +318,6 @@ df_encoded <- df_encoded %>%
   mutate(
     lat_long = latitude * longitude
   )
-
 ```
 
 
@@ -545,7 +543,6 @@ rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + numb
 # 
 # # Model performance
 rf_cv_model$results
-
 ```
 
 Findings:
