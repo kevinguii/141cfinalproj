@@ -56,7 +56,6 @@ library(tidyverse)
 library(GGally)
 library(caret)
 library(randomForest)
-library(xgboost)
 library(Matrix)
 library(corrplot)
 library(e1071)
@@ -67,6 +66,7 @@ df <- read.csv("AB_NYC_2019.csv")
 
 # View summary statistics
 summary(df)
+df
 ```
 Observations: 
 The average price is $152.72 with a standard deviation of $240.15.
@@ -107,8 +107,26 @@ ggplot(df2, aes(x = minimum_nights)) +
   geom_histogram(color = "black", fill = 'red') + 
   labs(title = "Distribution of Minimum Nights Before Removing Outliers", 
                           x = "Minimum Nights", y = "Count")
-#we see a heavily skewed right dist. so we want to remove these outer values
 ```
+### Removing the Outliers
+```{r}
+# Define upper and lower quantiles
+lower_quantile <- quantile(df$minimum_nights, 0.01)
+upper_quantile <- quantile(df$minimum_nights, 0.99)
+
+# Remove values outside this range
+df <- df[df$minimum_nights >= lower_quantile & df$minimum_nights <= upper_quantile, ]
+
+# Visualize the cleaned data
+ggplot(df_clean, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'blue') +
+  labs(title = "Distribution of Minimum Nights After Removing Outliers", 
+       x = "Minimum Nights", y = "Count")
+
+max(df_clean$minimum_nights)
+```
+
+
 ### Analyzing Skewness and Transformations
 ```{r}
 # Check skewness of numerical variables
@@ -125,7 +143,6 @@ Log Transformation of Skewed Variables
 # Apply log transformation to 'price' and 'minimum_nights'
 df <- df %>%
   mutate(
-    log_price = log(price + 1),
     log_minimum_nights = log(minimum_nights + 1)
   )
 ```
