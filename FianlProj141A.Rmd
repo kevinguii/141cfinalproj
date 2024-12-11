@@ -78,11 +78,11 @@ There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per
 ### Handling Missing Values
 ```{r}
 # Check for missing values
-colSums(is.na(df))
+print(colSums(is.na(df)))
 
 # Explore the data 
-str(df) #offers a compact preview of the data
-head(df)
+print(str(df)) #offers a compact preview of the data
+print(head(df))
 ```
 Observation:
 
@@ -100,8 +100,8 @@ df <- df %>% drop_na(name, host_name)
 
 ###Handling outliers for Columns
 ```{r}
-max(df$minimum_nights) #checking for information 
-mean(df$minimum_nights) #comparative measure of minimum nights
+print(max(df$minimum_nights)) #checking for information 
+print(mean(df$minimum_nights)) #comparative measure of minimum nights
 
 df2 <- df
 ggplot(df2, aes(x = minimum_nights)) +
@@ -452,6 +452,9 @@ print(paste("Root Mean Squared Error:", rmse_rf))
 # Variable Importance Plot
 varImpPlot(rf_model)
 ```
+```{r}
+rf_model$rsq
+```
 
 ### Random Forest Regression Model
 ```{r}
@@ -514,26 +517,60 @@ Random Forest RMSE: Approximately $68.75
 Conclusion: Random Forest model performs better.
 
 ```{r}
+# Load necessary libraries
+library(randomForest)
 library(caret)
-train_control <- trainControl(method = "cv", number = 5)
-rf_cv_model <- train(x = x_train, y = y_train, method = "rf", trControl = train_control, ntree = 100)
+
+# Set up training control for cross-validation
+set.seed(123)  # For reproducibility
+train_control <- trainControl(method = "cv",  # Cross-validation
+                               number = 5,   # Number of folds
+                               verboseIter = TRUE)  # Display progress
+
+# Define the model training process
+rf_cv_model <- train(x = x_train,
+                     y = y_train,
+                     method = "rf",  # Random forest
+                     trControl = train_control,
+                     tuneGrid = expand.grid(mtry = seq(1, ncol(x_train), by = 2)),  # Hyperparameter tuning for mtry
+                     ntree = 100,  # Number of trees
+                     importance = TRUE)
+
+# Display the results of cross-validation
 print(rf_cv_model)
+
+# Best tuning parameter
+print(paste("Best mtry:", rf_cv_model$bestTune))
+
+# Predict on test data using the best model
+rf_cv_predictions <- predict(rf_cv_model, newdata = x_test)
+
+# Calculate mean absolute error
+test_mae_rf_cv <- mean(abs(rf_cv_predictions - y_test))
+print(paste("Mean Absolute Error (CV):", test_mae_rf_cv))
+
+# Calculate RMSE
+rmse_rf_cv <- sqrt(mean((rf_cv_predictions - y_test)^2))
+print(paste("Root Mean Squared Error (CV):", rmse_rf_cv))
+
+# Variable Importance Plot
+varImpPlot(rf_cv_model$finalModel)
 ```
 
 ### Cross-Validation with Random Forest
 ```{r}
 # Load caret package
-library(caret)
+#library(caret)
 # 
 # Define cross-validation method
-train_control <- trainControl(method = "cv", number = 3)
+#train_control <- trainControl(method = "cv", number = 3)
 # 
 # # Train the random forest model with cross-validation
-set.seed(123)
-rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control, ntree=100)
+#set.seed(123)
+#rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control, ntree=100)
 # 
 # # Model performance
-rf_cv_model$results
+#rf_cv_model$results
 
 ```
 
