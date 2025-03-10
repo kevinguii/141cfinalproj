@@ -118,12 +118,12 @@ upper_quantile <- quantile(df$minimum_nights, 0.99)
 df <- df[df$minimum_nights >= lower_quantile & df$minimum_nights <= upper_quantile, ]
 
 # Visualize the cleaned data
-ggplot(df_clean, aes(x = minimum_nights)) +
+ggplot(df, aes(x = minimum_nights)) +
   geom_histogram(color = "black", fill = 'blue') +
   labs(title = "Distribution of Minimum Nights After Removing Outliers", 
        x = "Minimum Nights", y = "Count")
 
-max(df_clean$minimum_nights)
+max(df$minimum_nights)
 ```
 
 
@@ -143,6 +143,7 @@ Log Transformation of Skewed Variables
 # Apply log transformation to 'price' and 'minimum_nights'
 df <- df %>%
   mutate(
+    log_price = log(price + 1),            # <--- ADDED
     log_minimum_nights = log(minimum_nights + 1)
   )
 ```
@@ -338,21 +339,15 @@ df_encoded <- df_encoded %>%
 ```
 
 
-```{r}
-# df_encoded <- df_encoded %>% select(-id,-name,-host_id,-host_name,-room_type, -neighbourhood_group,-neighbourhood,-last_review)
-
-```
-
-
 Splitting Data into Training and Testing Sets
 ```{r}
-# Set seed for reproducibility
 set.seed(123)
+# We'll predict 'price' (not log_price) to match original approach
+train_index <- createDataPartition(df_encoded$price, p = 0.8, list = FALSE)
 
-# Split data (80% training, 20% testing)
-train_index <- createDataPartition(df_encoded$log_price, p = 0.8, list = FALSE)
 train_data <- df_encoded[train_index, ]
-test_data <- df_encoded[-train_index, ]
+test_data  <- df_encoded[-train_index, ]
+
 ```
 
 
@@ -424,83 +419,12 @@ Residuals vs Fitted: Indicates non-linearity.
 Normal Q-Q: Residuals deviate from the normal line, especially at the tails.
 Scale-Location: Heteroscedasticity is present.
 Residuals vs Leverage: No extreme outliers detected.
-```{r}
-library(caret)
-
-set.seed(123)
-tune_grid <- expand.grid(mtry = c(3, 5, 7))  # Test different values of mtry
-rf_tuned <- train(
-  log_price ~ .,
-  data = train_data_encoded,
-  method = "rf",
-  trControl = trainControl(method = "cv", number = 5),  # 5-fold cross-validation
-  tuneGrid = tune_grid,
-  ntree = 300  # Increase the number of trees for better performance
-)
-
-# Check the best mtry value
-print(rf_tuned$bestTune)
-best_rf_model <- rf_tuned$finalModel
-```
-
 
 ```{r}
 print(colnames(train_data_encoded))
 print(colnames(test_data_encoded))
 ```
 
-```{r}
-# Load the randomForest package
-library(randomForest)
-
-# Prepare x (predictors) and y (response variable) for training
-x_train <- train_data_encoded[, !(names(train_data_encoded) %in% c("price"))]  # Remove the target column
-y_train <- train_data_encoded$price  # Response variable
-
-# Prepare x (predictors) for testing
-x_test <- test_data_encoded[, !(names(test_data_encoded) %in% c("price"))]  # Remove the target column
-y_test <- test_data_encoded$price  # Actual prices for testing
-
-# Fit the Random Forest model using x and y
-rf_model <- randomForest(x = x_train, y = y_train, ntree = 100, importance = TRUE, na.action = na.omit)
-
-# Predict on test data
-rf_predictions <- predict(rf_model, newdata = x_test)
-
-# Calculate mean absolute error
-test_mae_rf <- mean(abs(rf_predictions - y_test))
-print(paste("Mean Absolute Error:", test_mae_rf))
-
-# Calculate RMSE
-rmse_rf <- sqrt(mean((rf_predictions - y_test)^2))
-print(paste("Root Mean Squared Error:", rmse_rf))
-
-# Variable Importance Plot
-varImpPlot(rf_model)
-```
-
-### Random Forest Regression Model
-```{r}
-# Load randomForest package
-#library(randomForest)
-# Fit random forest model
-#rf_model <- randomForest(price ~., data = train_data_encoded, ntree = 1, importance = TRUE, na.action = #na.omit)
-
-
-
-# Predict on test data
-#rf_predictions <- predict(rf_model, newdata = test_data_encoded)
-
-#Calculate mean absolute error
-#test_mae_rf <- mean(abs(rf_predictions - test_data_encoded$price))
-
-# Calculate RMSE
-#rmse_rf <- sqrt(mean((rf_predictions - test_data_encoded$price)^2))
-
-# Variable Importance Plot
-#varImpPlot(rf_model)
-
-```
 Findings:
 
 Model Performance: RMSE of approximately $68.75, which is lower than the linear model's RMSE.
@@ -520,9 +444,9 @@ rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
 
 # Compare RMSEs
 rmse_values <- data.frame(
-  Model = c("Linear Regression", "Random Forest"),
-  MAE = c(test_mae_lm, test_mae_rf),
-  RMSE = c(rmse_lm, rmse_rf)
+  Model = c("Linear Regression"),
+  MAE = c(test_mae_lm),
+  RMSE = c(rmse_lm)
 )
 print(rmse_values)
 
@@ -536,35 +460,6 @@ print(c(baseline_mae, baseline_rmse))
 Results:
 
 Linear Regression RMSE: Approximately $88.94
-Random Forest RMSE: Approximately $68.75
-Conclusion: Random Forest model performs better.
-
-```{r}
-library(caret)
-train_control <- trainControl(method = "cv", number = 5)
-rf_cv_model <- train(x = x_train, y = y_train, method = "rf", trControl = train_control, ntree = 100)
-print(rf_cv_model)
-```
-
-### Cross-Validation with Random Forest
-```{r}
-# Load caret package
-library(caret)
-# 
-# Define cross-validation method
-train_control <- trainControl(method = "cv", number = 3)
-# 
-# # Train the random forest model with cross-validation
-set.seed(123)
-rf_cv_model <- train(price ~ borough_num + room_type_num + minimum_nights + number_of_reviews + reviews_per_month + calculated_host_listings_count + availability_365, data = train_data, method = "rf", trControl = train_control, ntree=100)
-# 
-# # Model performance
-rf_cv_model$results
-```
-
-Findings:
-
-Cross-validated RMSE is consistent with the test RMSE, confirming model reliability.
 
 ## 6. Conclusions
 
