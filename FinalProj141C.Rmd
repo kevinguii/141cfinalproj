@@ -13,7 +13,9 @@ knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
 # Factors Influencing Airbnb Listing Prices in New York City
 
 ## Executive Summary
-This project investigates the factors that influence the pricing of Airbnb listings in New York City (NYC). By analyzing a comprehensive dataset from Airbnb, we aim to identify key variables that significantly affect listing prices and develop predictive models to estimate prices based on these features. We employ exploratory data analysis (EDA) to understand data distributions and relationships, and we use both linear regression and random forest models to predict prices. Our analysis reveals that factors such as location (borough and neighborhood), room type, minimum nights, availability, and number of reviews significantly impact Airbnb prices in NYC. The random forest model outperforms the linear regression model in predictive accuracy, suggesting that non-linear relationships are present in the data. These insights can help hosts optimize their pricing strategies and assist guests in making informed booking decisions.
+This project investigates the factors that influence the pricing of Airbnb listings in New York City (NYC). By analyzing a comprehensive dataset from Airbnb, we aim to identify key variables that significantly affect listing prices and develop predictive models to estimate prices based on these features. We employ exploratory data analysis (EDA) to understand data distributions and relationships, and we use both linear regression and polynomial regression models to predict prices. Our analysis reveals that factors such as location (borough and neighborhood), room type, minimum nights, availability, and number of reviews significantly impact Airbnb prices in NYC. 
+
+The decision trees model outperforms the linear regression model in predictive accuracy. These insights can help hosts optimize their pricing strategies and assist guests in making informed booking decisions.
 
 ## 1. Introduction
 
@@ -249,8 +251,6 @@ There is a moderate positive correlation between 'number_of_reviews' and 'review
 Exploratory Data Analysis (EDA): To understand data distributions, identify patterns, and detect anomalies.
 Data Preprocessing: To clean and prepare the data for modeling, ensuring reliable results.
 Linear Regression: As a baseline model to understand the linear relationships between variables.
-Random Forest Regression: To capture non-linear relationships and interactions between variables.
-Cross-Validation: To assess model performance and prevent overfitting.
 
 ### Data Preprocessing Steps
 Handling Missing Values: Imputed missing values appropriately.
@@ -352,32 +352,41 @@ test_data[, numeric_features] <- predict(preProcValues, test_data[, numeric_feat
 
 ### Linear Regression Model
 ```{r}
-### Linear Regression Model
 # Fit linear regression model
-dummy_data <- model.matrix(~ neighbourhood_group + room_type - 1, data = train_data)
+
+# Create dummy variables again to ensure alignment
+dummy_data <- model.matrix(~ neighbourhood_group + room_type - 1, 
+                           data = train_data)
 train_data_encoded <- cbind(train_data, dummy_data)
 
-# One-hot encode the test data 
-dummy_test <- model.matrix(~ neighbourhood_group + room_type - 1, data = test_data)
+dummy_test <- model.matrix(~ neighbourhood_group + room_type - 1, 
+                           data = test_data)
 test_data_encoded <- cbind(test_data, dummy_test)
 
-# Drop the original categorical variables to prevent duplicate entries
-# This ensures that only the one-hot encoded columns are used in the model
-train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
-"borough_num", "room_type_num", "latitude", "longitude"))]
+# Drop non-predictive or duplicated columns in both sets
+drop_cols <- c("room_type", "neighbourhood_group", "neighbourhood", 
+               "name", "host_name", "id", "host_id", "last_review",
+               "borough_num", "room_type_num", "latitude", "longitude",
+               "interaction_term")
 
-test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
-"borough_num", "room_type_num", "latitude", "longitude"))]
+train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) 
+                                             %in% drop_cols)]
+test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) 
+                                           %in% drop_cols)]
 
-# Align test data to match the columns in train data
+# Align columns
 missing_cols <- setdiff(names(train_data_encoded), names(test_data_encoded))
-test_data_encoded[missing_cols] <- 0  # Add missing columns with zeros
-test_data_encoded <- test_data_encoded[, names(train_data_encoded)]  # Ensure column order is consistent
+test_data_encoded[missing_cols] <- 0 
+test_data_encoded <- test_data_encoded[, names(train_data_encoded)]
 
-# Fit the linear regression model using the encoded training data
-# As a note, we "lose" one category from each column of neighbourhood_group
-# and the room_type because in one-hot encoding, we need a dummy variable as the set reference category
-lm_model <- lm(price ~., data = train_data_encoded)
+# Fit the linear regression model
+lm_model <- lm(price ~ ., data = train_data_encoded)
+
+# Predictions & Performance
+lm_predictions <- predict(lm_model, newdata = test_data_encoded)
+test_mae_lm <- mean(abs(lm_predictions - test_data_encoded$price))
+rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
+
 ```
 Findings:
 Significant Predictors: 'neighbourhood_group', 'room_type', 'minimum_nights', and 'availability_365'.
@@ -391,7 +400,6 @@ at an alpha level of .01
 # Plot residuals
 par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))  # Adjust the bottom, left, top, and right margins
 plot(lm_model)
-
 ```
 
 Observation:
@@ -406,44 +414,62 @@ Findings:
 Model Performance: RMSE of approximately $68.75, which is lower than the linear model's RMSE.
 Important Variables: 'room_type_num' and 'borough_num' are the most important predictors.
 
-### Model Comparison
+### Polynomial Regression
 ```{r}
-# Predict using linear model
-lm_model <- lm(price ~ ., data = train_data_encoded)
-lm_predictions <- predict(lm_model, newdata = test_data_encoded)
+# (1) Polynomial feature creation
+# We'll manually create a squared term for 'log_minimum_nights'
+train_data_encoded$log_minimum_nights_sq <- (train_data_encoded$log_minimum_nights)^2
+test_data_encoded$log_minimum_nights_sq  <- (test_data_encoded$log_minimum_nights)^2
 
-# Calculate mean absolute error 
-test_mae_lm <- mean(abs(lm_predictions - test_data_encoded$price))
+# Fit the polynomial regression using the updated train_data_encoded
+poly_model <- lm(price ~ ., data = train_data_encoded)
 
-# Calculate RMSE for linear model
-rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
-
-# Compare RMSEs
-rmse_values <- data.frame(
-  Model = c("Linear Regression"),
-  MAE = c(test_mae_lm),
-  RMSE = c(rmse_lm)
-)
-print(rmse_values)
-
-baseline_prediction <- mean(train_data_encoded$price)
-baseline_mae <- mean(abs(baseline_prediction - test_data_encoded$price))
-baseline_rmse <- sqrt(mean((baseline_prediction - test_data_encoded$price)^2))
-print(c(baseline_mae, baseline_rmse))
-
+# Predict on test set
+poly_predictions <- predict(poly_model, newdata = test_data_encoded)
+test_mae_poly <- mean(abs(poly_predictions - test_data_encoded$price))
+rmse_poly <- sqrt(mean((poly_predictions - test_data_encoded$price)^2))
 ```
 
+### Decision Trees
+```{r}
+# (2) Decision Tree
+library(rpart)
+tree_model <- rpart(price ~ ., data = train_data_encoded, method = "anova")
+
+# Predictions & Performance
+tree_predictions <- predict(tree_model, newdata = test_data_encoded)
+test_mae_tree <- mean(abs(tree_predictions - test_data_encoded$price))
+rmse_tree <- sqrt(mean((tree_predictions - test_data_encoded$price)^2))
+```
+
+### Model Comparison
+```{r}
+# Consolidate all model results
+model_comparison <- data.frame(
+  Model = c("Linear Regression", 
+            "Polynomial Regression", "Decision Tree"),
+  MAE  = c(test_mae_lm, test_mae_poly, test_mae_tree),
+  RMSE = c(rmse_lm, rmse_poly, rmse_tree)
+)
+
+model_comparison
+```
 Results:
 
-Linear Regression RMSE: Approximately $88.94
+We can see that the decision trees model performs the best, with an RMSE of 16.78395 and the Polynomial and Linear Regression having similar performances with 39.44174 and 39.45833 respectively.
 
 ## 6. Conclusions
 
 Key Influencing Factors: Location (borough), room type, minimum nights, and availability significantly impact Airbnb listing prices in NYC.
-Model Performance: The Random Forest model outperforms the Linear Regression model, indicating the presence of non-linear relationships.
+
+Model Performance: 
+Polynomial Regression can further improve over basic Linear Regression if the relationships are highly non-linear.
+Decision Trees are very interpretable and can perform better when tuned well.
+
 Recommendations for Hosts:
 Optimize pricing strategies by considering the impact of room type and location.
 Adjust minimum nights and availability to influence pricing positively.
+
 Recommendations for Guests:
 Look beyond popular boroughs like Manhattan to find more affordable options.
 Consider room types and booking durations to get better deals.
