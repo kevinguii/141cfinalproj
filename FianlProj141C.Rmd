@@ -397,7 +397,6 @@ lm_model <- lm(price ~., data = train_data_encoded)
 summary(lm_model)
 ```
 Findings:
-
 Significant Predictors: 'neighbourhood_group', 'room_type', 'minimum_nights', and 'availability_365'.
 Model Performance: Adjusted R-squared of approximately 0.35, indicating that the model explains about 35% of the variance in 'price'. An interesting observation to make is that the test lists the neighborhood group/
 borough Staten Island and not significantly significant with a p value of 0.30. It is also noted that 
@@ -405,7 +404,6 @@ the Borough Queens is relatively large compared to its other neighbourhood group
 at an alpha level of .01
 
 ### Residual Analysis for Linear Regression
-
 ```{r}
 # Plot residuals
 par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))  # Adjust the bottom, left, top, and right margins
@@ -419,11 +417,6 @@ Residuals vs Fitted: Indicates non-linearity.
 Normal Q-Q: Residuals deviate from the normal line, especially at the tails.
 Scale-Location: Heteroscedasticity is present.
 Residuals vs Leverage: No extreme outliers detected.
-
-```{r}
-print(colnames(train_data_encoded))
-print(colnames(test_data_encoded))
-```
 
 Findings:
 
