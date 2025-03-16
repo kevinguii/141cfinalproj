@@ -1,0 +1,449 @@
+---
+title: "STA141A_FinalProj"
+author: "Kevin Gui"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+# Factors Influencing Airbnb Listing Prices in New York City
+
+## Executive Summary
+This project investigates the factors that influence the pricing of Airbnb listings in New York City (NYC). By analyzing a comprehensive dataset from Airbnb, we aim to identify key variables that significantly affect listing prices and develop predictive models to estimate prices based on these features. We employ exploratory data analysis (EDA) to understand data distributions and relationships, and we use both linear regression and random forest models to predict prices. Our analysis reveals that factors such as location (borough and neighborhood), room type, minimum nights, availability, and number of reviews significantly impact Airbnb prices in NYC. The random forest model outperforms the linear regression model in predictive accuracy, suggesting that non-linear relationships are present in the data. These insights can help hosts optimize their pricing strategies and assist guests in making informed booking decisions.
+
+## 1. Introduction
+
+### Project Description and Background
+Airbnb has revolutionized the hospitality industry by allowing property owners to rent out their spaces to travelers worldwide. New York City, as one of the most visited cities globally, has a highly competitive and diverse short-term rental market. With thousands of listings across five boroughs, understanding what drives Airbnb prices can benefit hosts looking to optimize their rental income and guests seeking affordable options.
+
+### Project Goals
+- Identify Key Factors Influencing Prices: Determine which features significantly impact Airbnb listing prices in NYC.
+- Predictive Modeling: Develop models to predict listing prices based on these features.
+- Provide Insights for Stakeholders: Offer actionable insights for hosts and guests to make informed decisions.
+
+## 2. Data Description
+
+### Dataset Overview
+We utilize the "New York City Airbnb Open Data" from Kaggle, which includes detailed information about Airbnb listings in NYC for the year 2019.
+
+Data Source: Kaggle - New York City Airbnb Open Data
+Number of Observations: 48,895 listings
+Variables:
+id: Listing ID
+name: Name of the listing
+host_id: Host ID
+host_name: Host name
+neighbourhood_group: Borough (Manhattan, Brooklyn, etc.)
+neighbourhood: Specific neighborhood within the borough
+latitude: Latitude coordinate
+longitude: Longitude coordinate
+room_type: Type of room offered
+price: Price per night in USD
+minimum_nights: Minimum number of nights required to book
+number_of_reviews: Total number of reviews
+last_review: Date of the last review
+reviews_per_month: Average number of reviews per month
+calculated_host_listings_count: Number of listings the host has
+availability_365: Number of days the listing is available per year
+
+### Summary Statistics
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(GGally)
+library(caret)
+library(randomForest)
+library(Matrix)
+library(corrplot)
+library(e1071)
+library(DT)
+
+# Read the data
+df <- read.csv("AB_NYC_2019.csv")
+df <- data.frame(lapply(df, function(x) gsub("\u2B50", "", x)))
+
+df <- df %>%
+  mutate(across(c(minimum_nights, price, number_of_reviews, 
+                  reviews_per_month, availability_365, latitude, longitude), 
+                as.numeric))
+
+
+# View summary statistics
+summary(df)
+```
+Observations: 
+The average price is $152.72 with a standard deviation of $240.15.
+There are missing values in 'name', 'host_name', 'last_review', and 'reviews_per_month'. The 'price' variable is also highly skewed with extreme outliers.
+
+## 3. Exploratory Data Analysis
+
+### Handling Missing Values
+```{r}
+# Check for missing values
+colSums(is.na(df))
+
+# Explore the data 
+str(df) #offers a compact preview of the data
+head(df)
+```
+Observation:
+
+'name': 16 missing
+'host_name': 21 missing
+'last_review' and 'reviews_per_month': 10,052 missing (listings with zero reviews)
+
+```{r}
+# Fill missing 'reviews_per_month' with 0
+df$reviews_per_month[is.na(df$reviews_per_month)] <- 0
+
+# Drop rows with missing 'name' and 'host_name'
+df <- df %>% drop_na(name, host_name)
+```
+
+### Handling outliers for Columns
+```{r}
+max(df$minimum_nights) #checking for information 
+mean(df$minimum_nights) #comparative measure of minimum nights
+
+df2 <- df
+ggplot(df2, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'red') + 
+  labs(title = "Distribution of Minimum Nights Before Removing Outliers", 
+                          x = "Minimum Nights", y = "Count")
+```
+
+### Removing the Outliers
+```{r}
+# Define upper and lower quantiles
+lower_quantile <- quantile(df$minimum_nights, 0.01)
+upper_quantile <- quantile(df$minimum_nights, 0.99)
+
+# Remove values outside this range
+df <- df[df$minimum_nights >= lower_quantile & df$minimum_nights <= upper_quantile, ]
+
+# Visualize the cleaned data
+ggplot(df, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'blue') +
+  labs(title = "Distribution of Minimum Nights After Removing Outliers", 
+       x = "Minimum Nights", y = "Count")
+
+max(df$minimum_nights)
+```
+
+### Analyzing Skewness and Transformations
+```{r}
+# Check skewness of numerical variables
+numeric_vars <- df %>% select(price, minimum_nights, number_of_reviews, reviews_per_month, availability_365)
+skewness_values <- sapply(numeric_vars, e1071::skewness)
+print(skewness_values)
+```
+Observation:
+
+'price' and 'minimum_nights' are highly skewed to the right.
+
+### Log Transformation of Skewed Variables
+```{r}
+# Apply log transformation to 'price' and 'minimum_nights'
+df <- df %>%
+  mutate(
+    log_price = log(price + 1),            # <--- ADDED
+    log_minimum_nights = log(minimum_nights + 1)
+  )
+```
+
+### Distribution of Prices
+```{r}
+# Plot distribution of prices
+ggplot(df, aes(x = price)) +
+  geom_histogram(binwidth = 50, fill = "blue", color = "black") +
+  xlim(0, 1000) +
+  labs(title = "Distribution of Airbnb Prices", x = "Price ($)", y = "Count")
+```
+
+Observation:
+
+The price distribution is right-skewed, with most listings priced below $500.
+
+### Price by Borough
+```{r}
+# Boxplot of price by borough
+ggplot(df, aes(x = neighbourhood_group, y = price)) +
+  geom_boxplot() +
+  ylim(0, 500) +
+  labs(title = "Price Distribution by Borough", x = "Borough", y = "Price ($)")
+
+```
+
+Observation:
+
+Manhattan has higher median prices compared to other boroughs.
+Staten Island has a wider range of prices despite fewer listings.
+
+### Pairwise Scatter Plots
+```{r}
+# Select numerical variables
+numerical_vars <- df %>% select(price, minimum_nights, number_of_reviews, reviews_per_month, availability_365)
+
+# Pairwise scatter plots
+ggpairs(numerical_vars)
+```
+
+Observation:
+
+Weak correlations between 'price' and other numerical variables.
+'availability_365' shows some negative correlation with 'number_of_reviews'.
+
+### Exploring Location Data
+Using Neighborhoods and Coordinates:
+```{r}
+# Number of unique neighborhoods
+num_neighbourhoods <- length(unique(df$neighbourhood))
+cat("Number of unique neighborhoods:", num_neighbourhoods)
+
+# Visualize the number of listings per neighborhood
+top_neighbourhoods <- df %>%
+  group_by(neighbourhood) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  top_n(20, count)
+
+ggplot(top_neighbourhoods, aes(x = reorder(neighbourhood, count), y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 20 Neighborhoods by Number of Listings", x = "Neighborhood", y = "Number of Listings")
+```
+We have identified 221 unique neighbourhoods in New York, displaying the top 20 and the
+amount of listings. We can see Williamsburg and Bedford_Stuyevsant as the most popular by
+a decent margin.
+
+### Correlation Analysis
+```{r}
+# Compute correlation matrix
+corr_matrix <- cor(numeric_vars)
+corrplot(corr_matrix, method = "number", type = "upper")
+```
+
+### Map of Borough
+```{r}
+ggplot(data = df, aes(x = longitude, y = latitude, color = df$neighbourhood_group)) +
+  geom_point(size = 0.75)
+```
+
+### Map of Room Types Distribution
+```{r}
+ggplot(data = df, aes(x = longitude, y = latitude, color = room_type)) +
+  geom_point(size = 0.75)
+```
+Observation:
+
+There is a moderate positive correlation between 'number_of_reviews' and 'reviews_per_month'.
+'availability_365' has a weak correlation with other variables.
+
+## 4. Methodology
+
+### Rationale for Method Selection
+Exploratory Data Analysis (EDA): To understand data distributions, identify patterns, and detect anomalies.
+Data Preprocessing: To clean and prepare the data for modeling, ensuring reliable results.
+Linear Regression: As a baseline model to understand the linear relationships between variables.
+Random Forest Regression: To capture non-linear relationships and interactions between variables.
+Cross-Validation: To assess model performance and prevent overfitting.
+
+### Data Preprocessing Steps
+Handling Missing Values: Imputed missing values appropriately.
+Outlier Removal: Removed listings with prices above the 99th percentile to reduce skewness.
+Encoding Categorical Variables: Converted categorical variables into factors and created dummy variables.
+Feature Scaling: Scaled numerical features where necessary.
+
+## 5. Analysis and Findings
+
+### Data Cleaning and Preparation
+```{r}
+# Remove extreme outliers in 'price' (above 99th percentile)
+price_threshold <- quantile(df$price, 0.99)
+df <- df %>% filter(price <= price_threshold)
+
+#must also account for lower outliers in price
+sum(df$price == 0) #air bnb's with a price of 0 are questionable and removal may be advisable
+df$price <- ifelse(df$price < 10, 10, df$price) # As a broader case, replace prices 
+#below $10 with 10 and above $1000 with 1000. The replacement helps retain information
+#without limiting the impact on the model
+
+# Replace minimum_nights above 30 with 30, same reasoning as before to keep information
+# without negatively impacting the model accuracy 
+df$minimum_nights <- ifelse(df$minimum_nights > 30, 30, df$minimum_nights)
+
+ggplot(df, aes(x = minimum_nights)) +
+  geom_histogram(color = "black", fill = 'green') + 
+  labs(title = "Distribution of Minimum Nights After Removing Outliers", 
+                          x = "Minimum Nights", y = "Count")
+```
+```{r}
+# One-hot encode 'room_type' and 'neighbourhood_group'
+df_encoded <- df %>%
+  mutate(
+    borough_num = as.factor(neighbourhood_group),
+    room_type_num = as.factor(room_type)
+  )
+
+df_encoded <- cbind(df_encoded, model.matrix(~ room_type + neighbourhood_group - 1, data = df_encoded))
+```
+
+### Target Encoding for 'neighbourhood'
+```{r}
+# Compute mean price per neighbourhood
+neighbourhood_price <- df %>%
+  group_by(neighbourhood) %>%
+  summarise(mean_price = mean(log_price))
+
+# Merge with the main dataset
+df_encoded <- df_encoded %>%
+  left_join(neighbourhood_price, by = "neighbourhood")
+```
+
+### Feature Engineering
+### Interaction Terms
+```{r}
+# Create interaction between room type and neighbourhood group
+df_encoded <- df_encoded %>%
+  mutate(
+    interaction_term = interaction(room_type, neighbourhood_group)
+  )
+
+# One-hot encode the interaction term
+df_encoded <- cbind(df_encoded, model.matrix(~ interaction_term - 1, data = df_encoded))
+```
+
+### Using Geographical Coordinates
+```{r}
+# Create features based on latitude and longitude
+df_encoded <- df_encoded %>%
+  mutate(
+    lat_long = latitude * longitude
+  )
+```
+
+## Modeling
+
+### Splitting Data into Training and Testing Sets
+```{r}
+set.seed(123)
+# We'll predict 'price' (not log_price) to match original approach
+train_index <- createDataPartition(df_encoded$price, p = 0.8, list = FALSE)
+
+train_data <- df_encoded[train_index, ]
+test_data  <- df_encoded[-train_index, ]
+
+```
+
+### Feature Scaling
+```{r}
+# Identify numeric features to scale
+numeric_features <- c("log_minimum_nights", "number_of_reviews", "reviews_per_month", "availability_365", "mean_price", "lat_long")
+
+# Scale numeric features
+preProcValues <- preProcess(train_data[, numeric_features], method = c("center", "scale"))
+train_data[, numeric_features] <- predict(preProcValues, train_data[, numeric_features])
+test_data[, numeric_features] <- predict(preProcValues, test_data[, numeric_features])
+```
+
+### Linear Regression Model
+```{r}
+### Linear Regression Model
+# Fit linear regression model
+dummy_data <- model.matrix(~ neighbourhood_group + room_type - 1, data = train_data)
+train_data_encoded <- cbind(train_data, dummy_data)
+
+# One-hot encode the test data 
+dummy_test <- model.matrix(~ neighbourhood_group + room_type - 1, data = test_data)
+test_data_encoded <- cbind(test_data, dummy_test)
+
+# Drop the original categorical variables to prevent duplicate entries
+# This ensures that only the one-hot encoded columns are used in the model
+train_data_encoded <- train_data_encoded[, !(names(train_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
+
+test_data_encoded <- test_data_encoded[, !(names(test_data_encoded) %in% c("room_type", "neighbourhood_group", "neighbourhood", "name", "host_name", "id","host_id", "last_review",
+"borough_num", "room_type_num", "latitude", "longitude"))]
+
+# Align test data to match the columns in train data
+missing_cols <- setdiff(names(train_data_encoded), names(test_data_encoded))
+test_data_encoded[missing_cols] <- 0  # Add missing columns with zeros
+test_data_encoded <- test_data_encoded[, names(train_data_encoded)]  # Ensure column order is consistent
+
+# Fit the linear regression model using the encoded training data
+# As a note, we "lose" one category from each column of neighbourhood_group
+# and the room_type because in one-hot encoding, we need a dummy variable as the set reference category
+lm_model <- lm(price ~., data = train_data_encoded)
+```
+Findings:
+Significant Predictors: 'neighbourhood_group', 'room_type', 'minimum_nights', and 'availability_365'.
+Model Performance: Adjusted R-squared of approximately 0.35, indicating that the model explains about 35% of the variance in 'price'. An interesting observation to make is that the test lists the neighborhood group/
+borough Staten Island and not significantly significant with a p value of 0.30. It is also noted that 
+the Borough Queens is relatively large compared to its other neighbourhood groups but is still sigificant
+at an alpha level of .01
+
+### Residual Analysis for Linear Regression
+```{r}
+# Plot residuals
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))  # Adjust the bottom, left, top, and right margins
+plot(lm_model)
+
+```
+
+Observation:
+
+Residuals vs Fitted: Indicates non-linearity.
+Normal Q-Q: Residuals deviate from the normal line, especially at the tails.
+Scale-Location: Heteroscedasticity is present.
+Residuals vs Leverage: No extreme outliers detected.
+
+Findings:
+
+Model Performance: RMSE of approximately $68.75, which is lower than the linear model's RMSE.
+Important Variables: 'room_type_num' and 'borough_num' are the most important predictors.
+
+### Model Comparison
+```{r}
+# Predict using linear model
+lm_model <- lm(price ~ ., data = train_data_encoded)
+lm_predictions <- predict(lm_model, newdata = test_data_encoded)
+
+# Calculate mean absolute error 
+test_mae_lm <- mean(abs(lm_predictions - test_data_encoded$price))
+
+# Calculate RMSE for linear model
+rmse_lm <- sqrt(mean((lm_predictions - test_data_encoded$price)^2))
+
+# Compare RMSEs
+rmse_values <- data.frame(
+  Model = c("Linear Regression"),
+  MAE = c(test_mae_lm),
+  RMSE = c(rmse_lm)
+)
+print(rmse_values)
+
+baseline_prediction <- mean(train_data_encoded$price)
+baseline_mae <- mean(abs(baseline_prediction - test_data_encoded$price))
+baseline_rmse <- sqrt(mean((baseline_prediction - test_data_encoded$price)^2))
+print(c(baseline_mae, baseline_rmse))
+
+```
+
+Results:
+
+Linear Regression RMSE: Approximately $88.94
+
+## 6. Conclusions
+
+Key Influencing Factors: Location (borough), room type, minimum nights, and availability significantly impact Airbnb listing prices in NYC.
+Model Performance: The Random Forest model outperforms the Linear Regression model, indicating the presence of non-linear relationships.
+Recommendations for Hosts:
+Optimize pricing strategies by considering the impact of room type and location.
+Adjust minimum nights and availability to influence pricing positively.
+Recommendations for Guests:
+Look beyond popular boroughs like Manhattan to find more affordable options.
+Consider room types and booking durations to get better deals.
